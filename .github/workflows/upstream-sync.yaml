@@ -1,0 +1,441 @@
+# .github/workflows/upstream-sync.yml
+#
+# Weekday sync from upstream kserve/kserve master into vkarunai/kserve master.
+# Runs Mon–Fri at ~6 AM EST so PRs are ready for morning review.
+# Clean merges produce a simple PR. Conflicts trigger Claude Code for AI resolution.
+#
+# Trust tiers (PR labels):
+#   sync/clean                — no conflicts, trivial merge
+#   sync/ai-resolved-verified — Claude resolved conflicts, build + tests pass
+#   sync/ai-resolved-unverified — Claude resolved, build passes, tests didn't run
+#   sync/needs-human          — Claude couldn't resolve, conflict markers remain
+#
+# Required secrets:
+#   GCP_SA_KEY — Google Cloud service account JSON key (Vertex AI User role)
+# Uses default GITHUB_TOKEN for git push and PR creation.
+
+name: Daily Upstream Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Skip PR creation (just log what would happen)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      # ────────────────────────────────────────────
+      # 1. Checkout & fetch upstream
+      # ────────────────────────────────────────────
+      - name: Checkout midstream master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "upstream-sync[bot]"
+          git config user.email "upstream-sync[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/kserve/kserve.git
+          git fetch upstream master --no-tags
+
+      # ────────────────────────────────────────────
+      # 2. Close any stale sync PR from a previous day
+      # ────────────────────────────────────────────
+      - name: Close previous sync PR if still open
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OPEN_PRS=$(gh pr list \
+            --base master \
+            --label "upstream-sync" \
+            --state open \
+            --json number,headRefName,title \
+            --jq '.[]')
+
+          if [ -z "$OPEN_PRS" ]; then
+            echo "::notice::No stale sync PRs found."
+            exit 0
+          fi
+
+          echo "$OPEN_PRS" | jq -r '.number' | while read -r PR_NUM; do
+            BRANCH=$(echo "$OPEN_PRS" | jq -r "select(.number == $PR_NUM) | .headRefName")
+            echo "::notice::Closing stale sync PR #${PR_NUM} (${BRANCH})"
+
+            gh pr close "$PR_NUM" \
+              --comment "Superseded by today's sync run. A new PR will be created with the latest upstream commits." \
+              --delete-branch || true
+          done
+
+      # ────────────────────────────────────────────
+      # 3. Check if there's anything new to sync
+      # ────────────────────────────────────────────
+      - name: Check for new upstream commits
+        id: check
+        run: |
+          UPSTREAM_HEAD=$(git rev-parse upstream/master)
+          MERGE_BASE=$(git merge-base HEAD upstream/master)
+
+          if [ "$UPSTREAM_HEAD" = "$MERGE_BASE" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Already up to date with upstream — nothing to sync."
+            exit 0
+          fi
+
+          COMMIT_COUNT=$(git rev-list --count "$MERGE_BASE"..upstream/master)
+          COMMIT_LOG=$(git log --oneline "$MERGE_BASE"..upstream/master | head -80)
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "commit_count=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "commit_log<<COMMITS_EOF"
+            echo "$COMMIT_LOG"
+            echo "COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "::notice::$COMMIT_COUNT new upstream commits to sync."
+
+      # ────────────────────────────────────────────
+      # 4. Create sync branch & attempt merge
+      # ────────────────────────────────────────────
+      - name: Create sync branch
+        if: steps.check.outputs.skip == 'false'
+        id: branch
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          BRANCH="sync/upstream-${DATE}"
+
+          if git ls-remote --heads origin "$BRANCH" | grep -q .; then
+            BRANCH="${BRANCH}-$(date +%H%M%S)"
+          fi
+
+          git checkout -b "$BRANCH"
+          echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Attempt merge
+        if: steps.check.outputs.skip == 'false'
+        id: merge
+        run: |
+          if git merge upstream/master \
+               --no-edit \
+               -m "Merge upstream/master (${{ steps.check.outputs.commit_count }} commits)"; then
+            echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Clean merge — no conflicts."
+          else
+            echo "has_conflicts=true" >> "$GITHUB_OUTPUT"
+
+            CONFLICTED=$(git diff --name-only --diff-filter=U | sort)
+            CONFLICT_COUNT=$(echo "$CONFLICTED" | wc -l)
+            {
+              echo "conflicted_files<<CONFLICT_EOF"
+              echo "$CONFLICTED"
+              echo "CONFLICT_EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "conflict_count=$CONFLICT_COUNT" >> "$GITHUB_OUTPUT"
+
+            echo "::warning::Merge conflicts in $CONFLICT_COUNT file(s)."
+          fi
+
+      # ════════════════════════════════════════════
+      # CLEAN PATH — no conflicts
+      # ════════════════════════════════════════════
+      - name: Push clean merge
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'false' &&
+          inputs.dry_run != true
+        run: git push origin "${{ steps.branch.outputs.name }}"
+
+      - name: Create PR — sync/clean
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'false' &&
+          inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --base master \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits)" \
+            --body "$(cat <<'BODY_EOF'
+          ## Automated Upstream Sync
+
+          | | |
+          |---|---|
+          | **Trust tier** | `sync/clean` — no conflicts |
+          | **Upstream commits** | ${{ steps.check.outputs.commit_count }} |
+          | **Branch** | `${{ steps.branch.outputs.name }}` |
+
+          <details>
+          <summary>Upstream commit log</summary>
+
+          ```
+          ${{ steps.check.outputs.commit_log }}
+          ```
+          </details>
+
+          ---
+          > Auto-generated by [upstream-sync](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          BODY_EOF
+          )" \
+            --label "upstream-sync" \
+            --label "sync/clean"
+
+      # ════════════════════════════════════════════
+      # CONFLICT PATH — commit markers, open PR, invoke Claude, then verify
+      # ════════════════════════════════════════════
+      - name: Commit conflict markers
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        run: |
+          git add -A
+          git commit --no-verify -m "wip: upstream merge with conflict markers
+
+          Conflicted files:
+          ${{ steps.merge.outputs.conflicted_files }}"
+
+          git push origin "${{ steps.branch.outputs.name }}"
+
+      - name: Create conflict PR
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        id: conflict_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_URL=$(gh pr create \
+            --base master \
+            --head "${{ steps.branch.outputs.name }}" \
+            --title "chore: sync upstream — ${{ steps.merge.outputs.conflict_count }} conflict(s), AI resolving" \
+            --body "$(cat <<'BODY_EOF'
+          ## Automated Upstream Sync — Conflicts Detected
+
+          | | |
+          |---|---|
+          | **Trust tier** | Pending — Claude Code is resolving |
+          | **Upstream commits** | ${{ steps.check.outputs.commit_count }} |
+          | **Conflicted files** | ${{ steps.merge.outputs.conflict_count }} |
+
+          ### Conflicted files
+          ${{ steps.merge.outputs.conflicted_files }}
+
+          <details>
+          <summary>Upstream commit log</summary>
+
+          ```
+          ${{ steps.check.outputs.commit_log }}
+          ```
+          </details>
+
+          ---
+          > Auto-generated by [upstream-sync](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+          > **Trust tier will be assigned after AI resolution attempt.**
+          BODY_EOF
+          )" \
+            --label "upstream-sync")
+
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+
+      # ── Authenticate to GCP for Vertex AI ──
+      - name: Authenticate to Google Cloud
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Invoke Claude Code to resolve conflicts
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        uses: anthropics/claude-code-action@v1
+        with:
+          use_vertex: true
+          vertex_project_id: 'itpc-gcp-ai-eng-claude'
+          vertex_region: 'us-east5'
+          prompt: |
+            You are resolving merge conflicts from a daily upstream sync.
+
+            ## Context
+            This repo (vkarunai/kserve) is a fork of kserve/kserve. We merged
+            upstream/master into our master branch and hit conflicts.
+
+            ## Conflicted files
+            ${{ steps.merge.outputs.conflicted_files }}
+
+            ## Conflict resolution rules (in priority order)
+
+            1. **Preserve all fork-specific customizations.** Look for any code
+               that is unique to this fork (ODH-specific, OpenDataHub, OpenShift,
+               or any non-upstream additions).
+
+            2. **Accept upstream changes** for code that has no fork-specific modifications.
+
+            3. **Integrate both sides** when both upstream and fork modified the same
+               code. Apply the upstream refactor/rename while keeping fork additions.
+
+            4. **Imports**: include all imports needed by both sides. Remove duplicates.
+
+            5. **go.mod / go.sum**: accept upstream dependency versions unless there is
+               a `replace` directive with a comment explaining a specific pin.
+
+            6. **Config/YAML**: accept upstream structural changes to base configs.
+               Keep any fork-specific overlay patches intact.
+
+            ## Verification steps (you MUST do all of these)
+
+            1. Remove ALL conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
+            2. Run: `grep -rn '<<<<<<< \|======= \|>>>>>>> ' . --include='*.go' --include='*.yaml' --include='*.json' --include='*.mod'`
+               Confirm zero matches.
+            3. Run: `go build ./...` — must succeed.
+            4. Run: `cd qpext && go build ./...` — must succeed (separate Go module).
+            5. Commit your resolution with message:
+               "resolve merge conflicts from upstream sync"
+          claude_args: |
+            --max-turns 30
+            --model claude-sonnet-4-6
+            --allowedTools Edit,Read,Write,Bash(git*),Bash(go build*),Bash(grep*),Bash(find*),Bash(cd*),Bash(cat*),Bash(ls*),Bash(make manifests),Glob,Grep
+          timeout_minutes: 20
+
+      # ────────────────────────────────────────────
+      # 5. Verify AI resolution & assign trust tier
+      # ────────────────────────────────────────────
+      - name: Check for remaining conflict markers
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        id: verify_markers
+        run: |
+          git pull origin "${{ steps.branch.outputs.name }}" --ff-only || true
+
+          MARKERS=$(grep -rn '<<<<<<< \|======= \|>>>>>>> ' \
+            --include='*.go' --include='*.yaml' --include='*.json' \
+            --include='*.mod' --include='*.py' --include='*.sh' . || true)
+
+          if [ -n "$MARKERS" ]; then
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Conflict markers still present after AI resolution."
+            echo "$MARKERS"
+          else
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::All conflict markers removed."
+          fi
+
+      - name: Check build
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          steps.verify_markers.outputs.clean == 'true' &&
+          inputs.dry_run != true
+        id: verify_build
+        run: |
+          if go build ./... && (cd qpext && go build ./...); then
+            echo "passes=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Build passes."
+          else
+            echo "passes=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Build failed after AI resolution."
+          fi
+
+      - name: Run tests
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          steps.verify_markers.outputs.clean == 'true' &&
+          steps.verify_build.outputs.passes == 'true' &&
+          inputs.dry_run != true
+        id: verify_tests
+        continue-on-error: true
+        run: |
+          if make test 2>&1; then
+            echo "passes=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Tests pass."
+          else
+            echo "passes=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Tests failed after AI resolution."
+          fi
+
+      # ────────────────────────────────────────────
+      # 6. Apply trust tier label & update PR
+      # ────────────────────────────────────────────
+      - name: Determine trust tier
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        id: tier
+        run: |
+          MARKERS_CLEAN="${{ steps.verify_markers.outputs.clean }}"
+          BUILD_PASSES="${{ steps.verify_build.outputs.passes }}"
+          TESTS_PASS="${{ steps.verify_tests.outputs.passes }}"
+
+          if [ "$MARKERS_CLEAN" != "true" ] || [ "$BUILD_PASSES" != "true" ]; then
+            echo "label=sync/needs-human" >> "$GITHUB_OUTPUT"
+            echo "title_suffix=NEEDS HUMAN" >> "$GITHUB_OUTPUT"
+            echo "comment=Claude Code was unable to fully resolve the merge conflicts. Manual intervention is required." >> "$GITHUB_OUTPUT"
+          elif [ "$TESTS_PASS" = "true" ]; then
+            echo "label=sync/ai-resolved-verified" >> "$GITHUB_OUTPUT"
+            echo "title_suffix=AI resolved, verified" >> "$GITHUB_OUTPUT"
+            echo "comment=Claude Code resolved all conflicts. Build and tests pass. Review the AI-generated resolution before merging." >> "$GITHUB_OUTPUT"
+          else
+            echo "label=sync/ai-resolved-unverified" >> "$GITHUB_OUTPUT"
+            echo "title_suffix=AI resolved, tests not verified" >> "$GITHUB_OUTPUT"
+            echo "comment=Claude Code resolved all conflicts and the build passes, but tests either failed or were not run. Please verify manually before merging." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Apply trust tier to PR
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TIER="${{ steps.tier.outputs.label }}"
+          PR_URL="${{ steps.conflict_pr.outputs.pr_url }}"
+
+          gh pr edit "$PR_URL" \
+            --title "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits) — ${{ steps.tier.outputs.title_suffix }}" \
+            --add-label "$TIER"
+
+          gh pr comment "$PR_URL" --body "$(cat <<EOF
+          ### Trust tier: \`$TIER\`
+
+          ${{ steps.tier.outputs.comment }}
+
+          | Check | Result |
+          |-------|--------|
+          | Conflict markers removed | ${{ steps.verify_markers.outputs.clean == 'true' && '✅' || '❌' }} |
+          | \`go build ./...\` | ${{ steps.verify_build.outputs.passes == 'true' && '✅' || '❌' }} |
+          | \`make test\` | ${{ steps.verify_tests.outputs.passes == 'true' && '✅' || (steps.verify_tests.outputs.passes == 'false' && '❌' || '⏭️ skipped') }} |
+          EOF
+          )"
