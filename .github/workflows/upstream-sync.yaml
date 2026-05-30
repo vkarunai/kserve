@@ -4,11 +4,12 @@
 # Runs Mon–Fri at ~6 AM EST so PRs are ready for morning review.
 # Clean merges produce a simple PR. Conflicts trigger Claude Code for AI resolution.
 #
-# Trust tiers (PR labels):
-#   sync/clean                — no conflicts, trivial merge
-#   sync/ai-resolved-verified — Claude resolved conflicts, build + tests pass
-#   sync/ai-resolved-unverified — Claude resolved, build passes, tests didn't run
-#   sync/needs-human          — Claude couldn't resolve, conflict markers remain
+# Labels:
+#   upstream-sync                         — always applied to sync PRs
+#   tide/merge-method-merge               — always applied, merge strategy
+#   clean-merge                           — no conflicts, trivial merge
+#   merge-conflict/ai-resolved            — Claude resolved conflicts, build + precommit pass
+#   merge-conflict/needs-manual-resolution — Claude couldn't resolve or build fails
 #
 # Required secrets:
 #   GCP_SA_KEY — Google Cloud service account JSON key (Vertex AI User role)
@@ -61,64 +62,7 @@ jobs:
           git fetch upstream master --no-tags
 
       # ────────────────────────────────────────────
-      # 2. Verify required labels exist
-      # ────────────────────────────────────────────
-      - name: Check required labels
-        env:
-          GH_TOKEN: ${{ secrets.SYNC_PAT }}
-        run: |
-          echo "Checking required labels..."
-          EXISTING=$(gh label list --repo "${{ github.repository }}" --json name --jq '.[].name')
-          echo "Existing labels:"
-          echo "$EXISTING"
-
-          MISSING=()
-          for LABEL in "upstream-sync" "sync/clean" "sync/ai-resolved-verified" "sync/ai-resolved-unverified" "sync/needs-human"; do
-            if ! echo "$EXISTING" | grep -qx "$LABEL"; then
-              MISSING+=("$LABEL")
-              echo "::notice::Creating missing label: $LABEL"
-              gh label create "$LABEL" --repo "${{ github.repository }}" || true
-            fi
-          done
-
-          if [ ${#MISSING[@]} -eq 0 ]; then
-            echo "::notice::All required labels exist."
-          else
-            echo "::notice::Created ${#MISSING[@]} missing label(s)."
-          fi
-
-      # ────────────────────────────────────────────
-      # 3. Close any stale sync PR from a previous day
-      # ────────────────────────────────────────────
-      - name: Close previous sync PR if still open
-        env:
-          GH_TOKEN: ${{ secrets.SYNC_PAT }}
-        run: |
-          OPEN_PRS=$(gh pr list \
-            --repo "${{ github.repository }}" \
-            --base master \
-            --search "sync/upstream in:title" \
-            --state open \
-            --json number,headRefName,title \
-            --jq '.[]')
-
-          if [ -z "$OPEN_PRS" ]; then
-            echo "::notice::No stale sync PRs found."
-            exit 0
-          fi
-
-          echo "$OPEN_PRS" | jq -r '.number' | while read -r PR_NUM; do
-            BRANCH=$(echo "$OPEN_PRS" | jq -r "select(.number == $PR_NUM) | .headRefName")
-            echo "::notice::Closing stale sync PR #${PR_NUM} (${BRANCH})"
-
-            gh pr close "$PR_NUM" \
-              --repo "${{ github.repository }}" \
-              --comment "Superseded by today's sync run. A new PR will be created with the latest upstream commits." \
-              --delete-branch || true
-          done
-
-      # ────────────────────────────────────────────
-      # 3. Check if there's anything new to sync
+      # 2. Check if there's anything new to sync
       # ────────────────────────────────────────────
       - name: Check for new upstream commits
         id: check
@@ -147,6 +91,37 @@ jobs:
           echo "::notice::$COMMIT_COUNT new upstream commits to sync."
 
       # ────────────────────────────────────────────
+      # 3. Close any stale sync PR (only if we have new commits)
+      # ────────────────────────────────────────────
+      - name: Close previous sync PR if still open
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+        run: |
+          OPEN_PRS=$(gh pr list \
+            --repo "${{ github.repository }}" \
+            --base master \
+            --label "upstream-sync" \
+            --state open \
+            --json number,headRefName \
+            --jq '.[]')
+
+          if [ -z "$OPEN_PRS" ]; then
+            echo "::notice::No stale sync PRs found."
+            exit 0
+          fi
+
+          echo "$OPEN_PRS" | jq -r '.number' | while read -r PR_NUM; do
+            BRANCH=$(echo "$OPEN_PRS" | jq -r "select(.number == $PR_NUM) | .headRefName")
+            echo "::notice::Closing stale sync PR #${PR_NUM} (${BRANCH})"
+
+            gh pr close "$PR_NUM" \
+              --repo "${{ github.repository }}" \
+              --comment "Superseded by today's sync run with new upstream commits." \
+              --delete-branch || true
+          done
+
+      # ────────────────────────────────────────────
       # 4. Create sync branch & attempt merge
       # ────────────────────────────────────────────
       - name: Create sync branch
@@ -162,6 +137,7 @@ jobs:
 
           git checkout -b "$BRANCH"
           echo "name=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
       - name: Attempt merge
         if: steps.check.outputs.skip == 'false'
@@ -169,7 +145,7 @@ jobs:
         run: |
           if git merge upstream/master \
                --no-edit \
-               -m "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits) [skip ci]"; then
+               -m "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits)"; then
             echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Clean merge — no conflicts."
           else
@@ -209,15 +185,14 @@ jobs:
             --repo "${{ github.repository }}" \
             --base master \
             --head "${{ steps.branch.outputs.name }}" \
-            --title "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits)" \
+            --title "chore: upstream sync [${{ steps.branch.outputs.date }}] (${{ steps.check.outputs.commit_count }} commits)" \
             --body "$(cat <<'BODY_EOF'
           ## Automated Upstream Sync
 
           | | |
           |---|---|
-          | **Trust tier** | `sync/clean` — no conflicts |
           | **Upstream commits** | ${{ steps.check.outputs.commit_count }} |
-          | **Branch** | `${{ steps.branch.outputs.name }}` |
+          | **Conflicts** | None |
 
           <details>
           <summary>Upstream commit log</summary>
@@ -231,7 +206,10 @@ jobs:
           > Auto-generated by [upstream-sync](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
           BODY_EOF
           )")
-          gh pr edit "$PR_URL" --repo "${{ github.repository }}" --add-label "upstream-sync" --add-label "sync/clean"
+          gh pr edit "$PR_URL" --repo "${{ github.repository }}" \
+            --add-label "upstream-sync" \
+            --add-label "tide/merge-method-merge" \
+            --add-label "clean-merge"
 
       # ════════════════════════════════════════════
       # CONFLICT PATH — resolve with Claude, verify, then commit & open PR
@@ -398,13 +376,11 @@ jobs:
           BUILD_PASSES="${{ steps.verify_build.outputs.passes }}"
 
           if [ "$MARKERS_CLEAN" != "true" ] || [ "$BUILD_PASSES" != "true" ]; then
-            echo "label=sync/needs-human" >> "$GITHUB_OUTPUT"
-            echo "title_suffix=NEEDS HUMAN" >> "$GITHUB_OUTPUT"
+            echo "label=merge-conflict/needs-manual-resolution" >> "$GITHUB_OUTPUT"
             echo "comment=Claude Code was unable to fully resolve the merge conflicts. Manual intervention is required." >> "$GITHUB_OUTPUT"
           else
-            echo "label=sync/ai-resolved-verified" >> "$GITHUB_OUTPUT"
-            echo "title_suffix=AI resolved, verified" >> "$GITHUB_OUTPUT"
-            echo "comment=Claude Code resolved all conflicts. Build and precommit pass. Review the AI-generated resolution before merging." >> "$GITHUB_OUTPUT"
+            echo "label=merge-conflict/ai-resolved" >> "$GITHUB_OUTPUT"
+            echo "comment=Claude Code resolved all conflicts. Build and precommit checks pass." >> "$GITHUB_OUTPUT"
           fi
 
       - name: Commit and push
@@ -417,7 +393,7 @@ jobs:
           git rm --cached -f gha-creds-*.json 2>/dev/null || true
           rm -f gha-creds-*.json
 
-          git commit --no-verify -m "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits) — ${{ steps.tier.outputs.title_suffix }} [skip ci]"
+          git commit --signoff --no-verify -m "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits)"
           git push origin "${{ steps.branch.outputs.name }}"
 
       - name: Create PR with trust tier
@@ -434,17 +410,16 @@ jobs:
             --repo "${{ github.repository }}" \
             --base master \
             --head "${{ steps.branch.outputs.name }}" \
-            --title "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits) — ${{ steps.tier.outputs.title_suffix }}" \
+            --title "chore: upstream sync [${{ steps.branch.outputs.date }}] (${{ steps.check.outputs.commit_count }} commits)" \
             --body "$(cat <<'BODY_EOF'
-          ## Automated Upstream Sync — AI Conflict Resolution
+          ## Automated Upstream Sync
+
+          ${{ steps.tier.outputs.comment }}
 
           | | |
           |---|---|
-          | **Trust tier** | `${{ steps.tier.outputs.label }}` |
           | **Upstream commits** | ${{ steps.check.outputs.commit_count }} |
           | **Conflicted files** | ${{ steps.merge.outputs.conflict_count }} |
-
-          ${{ steps.tier.outputs.comment }}
 
           | Check | Result |
           |-------|--------|
@@ -470,4 +445,5 @@ jobs:
 
           gh pr edit "$PR_URL" --repo "${{ github.repository }}" \
             --add-label "upstream-sync" \
+            --add-label "tide/merge-method-merge" \
             --add-label "$TIER"
