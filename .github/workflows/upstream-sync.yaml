@@ -167,7 +167,7 @@ jobs:
         run: |
           if git merge upstream/master \
                --no-edit \
-               -m "Merge upstream/master (${{ steps.check.outputs.commit_count }} commits)"; then
+               -m "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits) [skip ci]"; then
             echo "has_conflicts=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Clean merge — no conflicts."
           else
@@ -241,7 +241,7 @@ jobs:
           inputs.dry_run != true
         run: |
           git add -A
-          git commit --no-verify -m "wip: upstream merge with conflict markers
+          git commit --no-verify -m "wip: upstream merge with conflict markers [skip ci]
 
           Conflicted files:
           ${{ steps.merge.outputs.conflicted_files }}"
