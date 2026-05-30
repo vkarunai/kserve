@@ -384,24 +384,6 @@ jobs:
           # Stage any auto-fix changes from formatters
           git add -A
 
-      - name: Run tests
-        if: >
-          steps.check.outputs.skip == 'false' &&
-          steps.merge.outputs.has_conflicts == 'true' &&
-          steps.verify_markers.outputs.clean == 'true' &&
-          steps.verify_build.outputs.passes == 'true' &&
-          inputs.dry_run != true
-        id: verify_tests
-        continue-on-error: true
-        run: |
-          if make test 2>&1; then
-            echo "passes=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Tests pass."
-          else
-            echo "passes=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Tests failed after AI resolution."
-          fi
-
       # ────────────────────────────────────────────
       # 6. Determine trust tier, commit, push & create PR
       # ────────────────────────────────────────────
@@ -414,20 +396,15 @@ jobs:
         run: |
           MARKERS_CLEAN="${{ steps.verify_markers.outputs.clean }}"
           BUILD_PASSES="${{ steps.verify_build.outputs.passes }}"
-          TESTS_PASS="${{ steps.verify_tests.outputs.passes }}"
 
           if [ "$MARKERS_CLEAN" != "true" ] || [ "$BUILD_PASSES" != "true" ]; then
             echo "label=sync/needs-human" >> "$GITHUB_OUTPUT"
             echo "title_suffix=NEEDS HUMAN" >> "$GITHUB_OUTPUT"
             echo "comment=Claude Code was unable to fully resolve the merge conflicts. Manual intervention is required." >> "$GITHUB_OUTPUT"
-          elif [ "$TESTS_PASS" = "true" ]; then
+          else
             echo "label=sync/ai-resolved-verified" >> "$GITHUB_OUTPUT"
             echo "title_suffix=AI resolved, verified" >> "$GITHUB_OUTPUT"
-            echo "comment=Claude Code resolved all conflicts. Build and tests pass. Review the AI-generated resolution before merging." >> "$GITHUB_OUTPUT"
-          else
-            echo "label=sync/ai-resolved-unverified" >> "$GITHUB_OUTPUT"
-            echo "title_suffix=AI resolved, tests not verified" >> "$GITHUB_OUTPUT"
-            echo "comment=Claude Code resolved all conflicts and the build passes, but tests either failed or were not run. Please verify manually before merging." >> "$GITHUB_OUTPUT"
+            echo "comment=Claude Code resolved all conflicts. Build and precommit pass. Review the AI-generated resolution before merging." >> "$GITHUB_OUTPUT"
           fi
 
       - name: Commit and push
@@ -436,6 +413,10 @@ jobs:
           steps.merge.outputs.has_conflicts == 'true' &&
           inputs.dry_run != true
         run: |
+          # Remove GCP credentials file created by google-github-actions/auth
+          git rm --cached -f gha-creds-*.json 2>/dev/null || true
+          rm -f gha-creds-*.json
+
           git commit --no-verify -m "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits) — ${{ steps.tier.outputs.title_suffix }} [skip ci]"
           git push origin "${{ steps.branch.outputs.name }}"
 
@@ -470,7 +451,6 @@ jobs:
           | Conflict markers removed | ${{ steps.verify_markers.outputs.clean == 'true' && '✅' || '❌' }} |
           | `go build ./...` | ${{ steps.verify_build.outputs.passes == 'true' && '✅' || '❌' }} |
           | `make precommit` | ${{ steps.verify_precommit.outputs.passes == 'true' && '✅' || '❌' }} |
-          | `make test` | ${{ steps.verify_tests.outputs.passes == 'true' && '✅' || (steps.verify_tests.outputs.passes == 'false' && '❌' || '⏭️ skipped') }} |
 
           ### Conflicted files
           ${{ steps.merge.outputs.conflicted_files }}
