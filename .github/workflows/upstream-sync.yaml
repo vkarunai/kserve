@@ -332,11 +332,14 @@ jobs:
         id: verify_markers
         run: |
           MARKER_FILES=""
-          for f in ${{ steps.merge.outputs.conflicted_files }}; do
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
             if grep -q '^<<<<<<< ' "$f" 2>/dev/null; then
               MARKER_FILES="$MARKER_FILES $f"
             fi
-          done
+          done <<'FILES_EOF'
+          ${{ steps.merge.outputs.conflicted_files }}
+          FILES_EOF
 
           if [ -n "$MARKER_FILES" ]; then
             echo "clean=false" >> "$GITHUB_OUTPUT"
