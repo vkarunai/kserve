@@ -297,6 +297,7 @@ jobs:
           CLOUD_ML_REGION: us-east5
         with:
           use_vertex: true
+          github_token: ${{ secrets.SYNC_PAT }}
           show_full_output: true
           prompt: |
             You are resolving merge conflicts from a daily upstream sync.
