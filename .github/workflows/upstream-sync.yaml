@@ -31,6 +31,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  id-token: write
 
 jobs:
   sync:
@@ -307,10 +308,11 @@ jobs:
           steps.merge.outputs.has_conflicts == 'true' &&
           inputs.dry_run != true
         uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_VERTEX_PROJECT_ID: itpc-gcp-ai-eng-claude
+          CLOUD_ML_REGION: us-east5
         with:
           use_vertex: true
-          vertex_project_id: 'itpc-gcp-ai-eng-claude'
-          vertex_region: 'us-east5'
           prompt: |
             You are resolving merge conflicts from a daily upstream sync.
 
@@ -353,7 +355,6 @@ jobs:
             --max-turns 30
             --model claude-sonnet-4-6
             --allowedTools Edit,Read,Write,Bash(git*),Bash(go build*),Bash(grep*),Bash(find*),Bash(cd*),Bash(cat*),Bash(ls*),Bash(make manifests),Glob,Grep
-          timeout_minutes: 20
 
       # ────────────────────────────────────────────
       # 5. Verify AI resolution & assign trust tier
