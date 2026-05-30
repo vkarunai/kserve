@@ -141,7 +141,6 @@ Everything between the opening and separator is ours; between separator and clos
   causes are missing imports, renamed types, or wrong function signatures.
 - If `make precommit` fails: read the output, fix the issue, re-run.
   Formatting/linting errors are usually auto-fixable by the make targets themselves.
-- If the push fails: run `git remote -v` and ensure origin points to the fork.
 
 ## Verification (MUST do all in order after resolving)
 
@@ -150,11 +149,10 @@ Everything between the opening and separator is ours; between separator and clos
    followed by a space). Must return no results (exit code 1).
 3. Run: `go build ./...` — must succeed.
 4. Run: `cd qpext && go build ./...` — must succeed.
-5. Run: `make precommit` — if it modifies files, stage those changes too.
-6. Commit and push:
-   ```
-   git add -A
-   git commit -m "resolve merge conflicts from upstream sync [skip ci]"
-   git push
-   ```
-   The push MUST succeed. If it fails, run `git remote -v` and check branch tracking.
+5. Run: `make precommit` — let it auto-fix any formatting issues.
+
+## IMPORTANT: Do NOT use git write commands
+
+Do NOT run `git add`, `git commit`, or `git push`.
+The workflow handles all git operations after you finish.
+You only have read-only git access (log, diff, grep, show).
