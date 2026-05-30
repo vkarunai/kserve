@@ -314,6 +314,7 @@ jobs:
         with:
           use_vertex: true
           github_token: ${{ secrets.SYNC_PAT }}
+          show_full_output: true
           prompt: |
             You are resolving merge conflicts from a daily upstream sync.
 
@@ -346,16 +347,21 @@ jobs:
             ## Verification steps (you MUST do all of these)
 
             1. Remove ALL conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
-            2. Run: `grep -rn '<<<<<<< \|======= \|>>>>>>> ' . --include='*.go' --include='*.yaml' --include='*.json' --include='*.mod'`
+            2. Run: `grep -rn '<<<<<<< \|======= \|>>>>>>> ' . --include='*.go' --include='*.yaml' --include='*.json' --include='*.mod' --include='*.py'`
                Confirm zero matches.
             3. Run: `go build ./...` — must succeed.
             4. Run: `cd qpext && go build ./...` — must succeed (separate Go module).
-            5. Commit your resolution with message:
-               "resolve merge conflicts from upstream sync"
+            5. Commit and PUSH your resolution:
+               ```
+               git add -A
+               git commit -m "resolve merge conflicts from upstream sync [skip ci]"
+               git push
+               ```
+               The push MUST succeed. If it fails, check git remote configuration.
           claude_args: |
-            --max-turns 30
+            --max-turns 50
             --model claude-sonnet-4-6
-            --allowedTools Edit,Read,Write,Bash(git*),Bash(go build*),Bash(grep*),Bash(find*),Bash(cd*),Bash(cat*),Bash(ls*),Bash(make manifests),Glob,Grep
+            --allowedTools Edit,Read,Write,Bash(git*),Bash(go build*),Bash(grep*),Bash(find*),Bash(cd*),Bash(cat*),Bash(ls*),Bash(make manifests),Bash(make fmt),Glob,Grep
 
       # ────────────────────────────────────────────
       # 5. Verify AI resolution & assign trust tier
