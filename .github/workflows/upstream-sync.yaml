@@ -59,7 +59,34 @@ jobs:
           git fetch upstream master --no-tags
 
       # ────────────────────────────────────────────
-      # 2. Close any stale sync PR from a previous day
+      # 2. Verify required labels exist
+      # ────────────────────────────────────────────
+      - name: Check required labels
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
+        run: |
+          echo "Checking required labels..."
+          EXISTING=$(gh label list --repo "${{ github.repository }}" --json name --jq '.[].name')
+          echo "Existing labels:"
+          echo "$EXISTING"
+
+          MISSING=()
+          for LABEL in "upstream-sync" "sync/clean" "sync/ai-resolved-verified" "sync/ai-resolved-unverified" "sync/needs-human"; do
+            if ! echo "$EXISTING" | grep -qx "$LABEL"; then
+              MISSING+=("$LABEL")
+              echo "::notice::Creating missing label: $LABEL"
+              gh label create "$LABEL" --repo "${{ github.repository }}" || true
+            fi
+          done
+
+          if [ ${#MISSING[@]} -eq 0 ]; then
+            echo "::notice::All required labels exist."
+          else
+            echo "::notice::Created ${#MISSING[@]} missing label(s)."
+          fi
+
+      # ────────────────────────────────────────────
+      # 3. Close any stale sync PR from a previous day
       # ────────────────────────────────────────────
       - name: Close previous sync PR if still open
         env:
@@ -67,7 +94,7 @@ jobs:
         run: |
           OPEN_PRS=$(gh pr list \
             --base master \
-            --label "upstream-sync" \
+            --search "sync/upstream in:title" \
             --state open \
             --json number,headRefName,title \
             --jq '.[]')
