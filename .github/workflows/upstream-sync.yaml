@@ -174,7 +174,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
-          gh pr create \
+          PR_URL=$(gh pr create \
             --base master \
             --head "${{ steps.branch.outputs.name }}" \
             --title "chore: sync upstream (${{ steps.check.outputs.commit_count }} commits)" \
