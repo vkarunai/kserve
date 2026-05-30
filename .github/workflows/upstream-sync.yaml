@@ -53,6 +53,7 @@ jobs:
         run: |
           git config user.name "upstream-sync[bot]"
           git config user.email "upstream-sync[bot]@users.noreply.github.com"
+          git config push.autoSetupRemote true
 
       - name: Fetch upstream
         run: |
@@ -292,6 +293,45 @@ jobs:
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
           gh pr edit "$PR_URL" --repo "${{ github.repository }}" --add-label "upstream-sync"
 
+      # ── Pre-install toolchain so Claude doesn't waste turns ──
+      - name: Set up Go
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Python
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Pre-install Make tools
+        if: >
+          steps.check.outputs.skip == 'false' &&
+          steps.merge.outputs.has_conflicts == 'true' &&
+          inputs.dry_run != true
+        run: |
+          echo "::group::Installing Go tools (golangci-lint, controller-gen, kustomize, yq, helm-docs, pinact)"
+          make golangci-lint controller-gen kustomize yq helm-docs pinact
+          echo "::endgroup::"
+
+          echo "::group::Installing Python tools (uv, ruff)"
+          make $(pwd)/bin/.venv/bin/uv $(pwd)/bin/.venv/bin/ruff
+          echo "::endgroup::"
+
+          echo "::group::Go module download"
+          go mod download
+          cd qpext && go mod download
+          echo "::endgroup::"
+
       # ── Authenticate to GCP for Vertex AI ──
       - name: Authenticate to Google Cloud
         if: >
@@ -317,51 +357,14 @@ jobs:
           show_full_output: true
           prompt: |
             You are resolving merge conflicts from a daily upstream sync.
-
-            ## Context
-            This repo (vkarunai/kserve) is a fork of kserve/kserve. We merged
-            upstream/master into our master branch and hit conflicts.
+            Read CLAUDE.md for full instructions.
 
             ## Conflicted files
             ${{ steps.merge.outputs.conflicted_files }}
-
-            ## Conflict resolution rules (in priority order)
-
-            1. **Preserve all fork-specific customizations.** Look for any code
-               that is unique to this fork (ODH-specific, OpenDataHub, OpenShift,
-               or any non-upstream additions).
-
-            2. **Accept upstream changes** for code that has no fork-specific modifications.
-
-            3. **Integrate both sides** when both upstream and fork modified the same
-               code. Apply the upstream refactor/rename while keeping fork additions.
-
-            4. **Imports**: include all imports needed by both sides. Remove duplicates.
-
-            5. **go.mod / go.sum**: accept upstream dependency versions unless there is
-               a `replace` directive with a comment explaining a specific pin.
-
-            6. **Config/YAML**: accept upstream structural changes to base configs.
-               Keep any fork-specific overlay patches intact.
-
-            ## Verification steps (you MUST do all of these)
-
-            1. Remove ALL conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
-            2. Run: `grep -rn '<<<<<<< \|======= \|>>>>>>> ' . --include='*.go' --include='*.yaml' --include='*.json' --include='*.mod' --include='*.py'`
-               Confirm zero matches.
-            3. Run: `go build ./...` — must succeed.
-            4. Run: `cd qpext && go build ./...` — must succeed (separate Go module).
-            5. Commit and PUSH your resolution:
-               ```
-               git add -A
-               git commit -m "resolve merge conflicts from upstream sync [skip ci]"
-               git push
-               ```
-               The push MUST succeed. If it fails, check git remote configuration.
           claude_args: |
             --max-turns 50
             --model claude-sonnet-4-6
-            --allowedTools Edit,Read,Write,Bash(git*),Bash(go build*),Bash(grep*),Bash(find*),Bash(cd*),Bash(cat*),Bash(ls*),Bash(make manifests),Bash(make fmt),Glob,Grep
+            --allowedTools Edit,Read,Write,Bash(git*),Bash(go*),Bash(grep*),Bash(find*),Bash(cd*),Bash(cat*),Bash(ls*),Bash(make*),Bash(pip*),Bash(pre-commit*),Glob,Grep
 
       # ────────────────────────────────────────────
       # 5. Verify AI resolution & assign trust tier
