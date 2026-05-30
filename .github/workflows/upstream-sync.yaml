@@ -378,14 +378,29 @@ jobs:
         run: |
           git pull origin "${{ steps.branch.outputs.name }}" --ff-only || true
 
-          MARKERS=$(grep -rn '<<<<<<< \|======= \|>>>>>>> ' \
-            --include='*.go' --include='*.yaml' --include='*.json' \
-            --include='*.mod' --include='*.py' --include='*.sh' . || true)
+          # Find the markers commit (the one we pushed before Claude ran).
+          MARKERS_SHA=$(git log --format=%H --grep="upstream merge with conflict markers" -1)
+          UNRESOLVED=""
 
-          if [ -n "$MARKERS" ]; then
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+
+            # Check 1: Did Claude actually modify this file from the markers commit?
+            if git diff --quiet "$MARKERS_SHA" HEAD -- "$file" 2>/dev/null; then
+              UNRESOLVED+="  $file (unchanged — Claude did not resolve this file)\n"
+              continue
+            fi
+
+            # Check 2: Does the resolved file still contain opening conflict markers?
+            if grep -q '^<<<<<<< ' "$file" 2>/dev/null; then
+              UNRESOLVED+="  $file (still has conflict markers)\n"
+            fi
+          done <<< "${{ steps.merge.outputs.conflicted_files }}"
+
+          if [ -n "$UNRESOLVED" ]; then
             echo "clean=false" >> "$GITHUB_OUTPUT"
-            echo "::error::Conflict markers still present after AI resolution."
-            echo "$MARKERS"
+            echo "::error::Conflict markers still present after AI resolution:"
+            printf "$UNRESOLVED"
           else
             echo "clean=true" >> "$GITHUB_OUTPUT"
             echo "::notice::All conflict markers removed."
