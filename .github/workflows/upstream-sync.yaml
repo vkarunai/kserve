@@ -44,7 +44,7 @@ jobs:
       # 1. Checkout & fetch upstream
       # ────────────────────────────────────────────
       - name: Checkout midstream master
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: master
           fetch-depth: 0
@@ -221,7 +221,7 @@ jobs:
           steps.check.outputs.skip == 'false' &&
           steps.merge.outputs.has_conflicts == 'true' &&
           inputs.dry_run != true
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
           cache: true
@@ -231,7 +231,7 @@ jobs:
           steps.check.outputs.skip == 'false' &&
           steps.merge.outputs.has_conflicts == 'true' &&
           inputs.dry_run != true
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
@@ -260,7 +260,7 @@ jobs:
           steps.check.outputs.skip == 'false' &&
           steps.merge.outputs.has_conflicts == 'true' &&
           inputs.dry_run != true
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2.1.13
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
@@ -269,7 +269,7 @@ jobs:
           steps.check.outputs.skip == 'false' &&
           steps.merge.outputs.has_conflicts == 'true' &&
           inputs.dry_run != true
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@787c5a0ce96a9a6cfb050ea0c8f4c05f2447c251 # v1.0.133
         env:
           ANTHROPIC_VERTEX_PROJECT_ID: itpc-gcp-ai-eng-claude
           CLOUD_ML_REGION: us-east5

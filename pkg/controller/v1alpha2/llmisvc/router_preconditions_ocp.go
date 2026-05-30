@@ -48,7 +48,7 @@ var authPolicyGVK = schema.GroupVersionKind{
 // Returns an error both for transient failures (discovery/RBAC) and for missing CRD.
 // The caller is responsible for distinguishing retryable vs non-retryable errors
 // (e.g. by not propagating ErrPreconditionNotMet to avoid infinite requeue).
-func (r *LLMISVCReconciler) ensureGatewayPreconditions(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService) error {
+func (r *LLMISVCReconciler) ensureGatewayPreconditions(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService, cfg *Config) error {
 	logger := log.FromContext(ctx).WithName("ensureGatewayPreconditions")
 
 	if authDisabled {
@@ -61,7 +61,7 @@ func (r *LLMISVCReconciler) ensureGatewayPreconditions(ctx context.Context, llmS
 		return fmt.Errorf("failed to check AuthPolicy CRD availability: %w", err)
 	}
 	if !ok && llmSvc.IsAuthEnabled() {
-		route := r.expectedHTTPRoute(ctx, llmSvc)
+		route := r.expectedHTTPRoute(ctx, llmSvc, cfg)
 		if err := Delete(ctx, r, llmSvc, route); err != nil {
 			return fmt.Errorf("AuthPolicy CRD is not available, please install Red Hat Connectivity Link: %w", err)
 		}

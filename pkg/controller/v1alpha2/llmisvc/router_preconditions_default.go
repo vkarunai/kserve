@@ -28,6 +28,6 @@ import (
 // Distribution-specific builds (compiled with -tags distro) can provide a real
 // implementation to enforce platform-specific prerequisites before the
 // Gateway/HTTPRoute is reconciled.
-func (r *LLMISVCReconciler) ensureGatewayPreconditions(_ context.Context, _ *v1alpha2.LLMInferenceService) error {
+func (r *LLMISVCReconciler) ensureGatewayPreconditions(_ context.Context, _ *v1alpha2.LLMInferenceService, _ *Config) error {
 	return nil
 }
