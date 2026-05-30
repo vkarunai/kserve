@@ -77,13 +77,12 @@ fork code and adapt it to work with the new upstream structure.
 
 ### Understanding the markers
 
-```
-<<<<<<< HEAD
-(our fork's version — this is vkarunai/kserve master)
-=======
-(upstream's version — this is kserve/kserve master)
->>>>>>> upstream/master
-```
+Git conflict markers have this structure:
+- Line starting with 7x `<` followed by `HEAD` = our fork's version (vkarunai/kserve master)
+- Line with exactly 7x `=` = separator between the two sides
+- Line starting with 7x `>` followed by `upstream/master` = upstream's version (kserve/kserve master)
+
+Everything between the opening and separator is ours; between separator and closing is theirs.
 
 ### How to approach each conflicted file
 
@@ -146,8 +145,9 @@ fork code and adapt it to work with the new upstream structure.
 
 ## Verification (MUST do all in order after resolving)
 
-1. Remove ALL conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
-2. Run: `grep -rn '<<<<<<< \|======= \|>>>>>>> ' . --include='*.go' --include='*.yaml' --include='*.json' --include='*.mod' --include='*.py'` — confirm zero matches.
+1. Remove ALL conflict markers (the 7-character `<`, `=`, `>` lines).
+2. Verify no markers remain: run `git grep` for the opening marker (7x less-than
+   followed by a space). Must return no results (exit code 1).
 3. Run: `go build ./...` — must succeed.
 4. Run: `cd qpext && go build ./...` — must succeed.
 5. Run: `make precommit` — if it modifies files, stage those changes too.
