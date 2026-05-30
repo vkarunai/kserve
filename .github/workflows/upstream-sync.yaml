@@ -12,7 +12,7 @@
 #
 # Required secrets:
 #   GCP_SA_KEY — Google Cloud service account JSON key (Vertex AI User role)
-# Uses default GITHUB_TOKEN for git push and PR creation.
+#   SYNC_PAT — GitHub PAT with `repo` + `workflow` scopes (needed to push workflow file changes)
 
 name: Daily Upstream Sync
 
@@ -31,7 +31,6 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  workflows: write
 
 jobs:
   sync:
@@ -47,7 +46,7 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.SYNC_PAT }}
 
       - name: Configure git identity
         run: |
@@ -64,7 +63,7 @@ jobs:
       # ────────────────────────────────────────────
       - name: Close previous sync PR if still open
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
           OPEN_PRS=$(gh pr list \
             --base master \
@@ -173,7 +172,7 @@ jobs:
           steps.merge.outputs.has_conflicts == 'false' &&
           inputs.dry_run != true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
           gh pr create \
             --base master \
@@ -227,7 +226,7 @@ jobs:
           inputs.dry_run != true
         id: conflict_pr
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
           PR_URL=$(gh pr create \
             --base master \
@@ -419,7 +418,7 @@ jobs:
           steps.merge.outputs.has_conflicts == 'true' &&
           inputs.dry_run != true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_PAT }}
         run: |
           TIER="${{ steps.tier.outputs.label }}"
           PR_URL="${{ steps.conflict_pr.outputs.pr_url }}"
