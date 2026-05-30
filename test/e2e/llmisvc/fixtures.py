@@ -942,12 +942,8 @@ LLMINFERENCESERVICE_CONFIGS = {
     },
     "workload-llmd-simulator": {
         "replicas": 1,
-<<<<<<< HEAD
         "model": {"uri": OPT_125M_MODEL_URI, "name": "facebook/opt-125m"},
-=======
-        "model": {"uri": "hf://facebook/opt-125m", "name": "facebook/opt-125m"},
         "storageInitializer": {"enabled": False},
->>>>>>> upstream/master
         "template": {
             "containers": [
                 {
@@ -976,12 +972,8 @@ LLMINFERENCESERVICE_CONFIGS = {
         },
     },
     "workload-llmd-simulator-no-replicas": {
-<<<<<<< HEAD
         "model": {"uri": OPT_125M_MODEL_URI, "name": "facebook/opt-125m"},
-=======
-        "model": {"uri": "hf://facebook/opt-125m", "name": "facebook/opt-125m"},
         "storageInitializer": {"enabled": False},
->>>>>>> upstream/master
         "template": {
             "containers": [
                 {
@@ -1060,12 +1052,8 @@ LLMINFERENCESERVICE_CONFIGS = {
         },
     },
     "workload-llmd-simulator-pd": {
-<<<<<<< HEAD
         "model": {"uri": OPT_125M_MODEL_URI, "name": "facebook/opt-125m"},
-=======
-        "model": {"uri": "hf://facebook/opt-125m", "name": "facebook/opt-125m"},
         "storageInitializer": {"enabled": False},
->>>>>>> upstream/master
         "template": {
             "containers": [
                 {
@@ -1216,12 +1204,8 @@ LLMINFERENCESERVICE_CONFIGS = {
     },
     "workload-llmd-simulator-kvcache": {
         "replicas": 2,
-<<<<<<< HEAD
         "model": {"uri": OPT_125M_MODEL_URI, "name": "facebook/opt-125m"},
-=======
-        "model": {"uri": "hf://facebook/opt-125m", "name": "facebook/opt-125m"},
         # Important: storage initializer is required for precise-prefix-scorer
->>>>>>> upstream/master
         "template": {
             "containers": [
                 {
