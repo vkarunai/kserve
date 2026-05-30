@@ -84,7 +84,7 @@ func (r *LLMISVCReconciler) hasIstioGateway(ctx context.Context, routes []*gwapi
 
 // reconcileRouterPlatformNetworking configures Istio DestinationRules so the gateway can communicate with the
 // scheduler and workload pods over TLS using self-signed certificates without injected sidecars.
-func (r *LLMISVCReconciler) reconcileRouterPlatformNetworking(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService) error {
+func (r *LLMISVCReconciler) reconcileRouterPlatformNetworking(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService, cfg *Config) error {
 	log.FromContext(ctx).Info("Reconciling Istio Destination Rules")
 
 	if llmSvc.Spec.Router == nil {
@@ -97,7 +97,7 @@ func (r *LLMISVCReconciler) reconcileRouterPlatformNetworking(ctx context.Contex
 	}
 
 	if llmSvc.Spec.Router.Route != nil && !llmSvc.Spec.Router.Route.HTTP.HasRefs() {
-		routes = append(routes, r.expectedHTTPRoute(ctx, llmSvc))
+		routes = append(routes, r.expectedHTTPRoute(ctx, llmSvc, cfg))
 	}
 
 	isIstio, err := r.hasIstioGateway(ctx, routes)

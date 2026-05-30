@@ -26,6 +26,6 @@ import (
 
 // reconcileRouterPlatformNetworking is a hook for distribution-specific networking setup
 // required by the router (e.g. Istio DestinationRules for TLS origination).
-func (r *LLMISVCReconciler) reconcileRouterPlatformNetworking(_ context.Context, _ *v1alpha2.LLMInferenceService) error {
+func (r *LLMISVCReconciler) reconcileRouterPlatformNetworking(_ context.Context, _ *v1alpha2.LLMInferenceService, _ *Config) error {
 	return nil
 }
